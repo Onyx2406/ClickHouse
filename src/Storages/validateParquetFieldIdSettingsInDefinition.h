@@ -14,8 +14,10 @@ namespace DB
   * them (an ambient session or profile value never reaches a table definition — see
   * `getFormatSettingsForTableDefinition`), the definition is a fresh one — a `CREATE`, or a
   * full-definition `ATTACH` — and the format is Parquet. Replaying
-  * an already-accepted definition (server startup, replicated or `ON CLUSTER` DDL replay,
-  * `RESTORE` from backup, a short `ATTACH TABLE t`) is exempt, so existing tables always load.
+  * an already-accepted definition (server startup, the other replicas of a `Replicated` database
+  * replaying the query its initiator has accepted, `RESTORE` from backup, a short `ATTACH TABLE t`)
+  * is exempt, so existing tables always load. A plain `CREATE ... ON CLUSTER` is not a replay: every
+  * host runs it from the distributed DDL queue as a `CREATE`, so it is validated on each of them.
   *
   * When the definition declares its columns and `definition_columns_match_writer_header` is true,
   * the header-dependent checks (unknown columns, full coverage of the schema, ambiguous dotted

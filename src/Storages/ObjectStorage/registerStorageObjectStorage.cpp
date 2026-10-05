@@ -81,10 +81,12 @@ createStorageObjectStorage(const StorageFactory::Arguments & args, StorageObject
     /// Reject the definition up front when the settings are freshly supplied by the user: a `CREATE`
     /// query, or a full-definition `ATTACH TABLE t (...) ENGINE = ...` query, which introduces a new
     /// definition just like `CREATE` does. Replaying a definition that was already accepted once —
-    /// server startup (`FORCE_ATTACH` / `FORCE_RESTORE`), replicated or `ON CLUSTER` DDL replay and
-    /// `RESTORE` from backup (`SECONDARY_CREATE`), a short `ATTACH TABLE t`, the tables attached by
-    /// `ATTACH DATABASE` (`attach_short_syntax`) — is exempt, so existing tables always load; the
-    /// write-time guard in `ParquetBlockOutputFormat` still protects such legacy tables.
+    /// server startup (`FORCE_ATTACH` / `FORCE_RESTORE`), the other replicas of a `Replicated` database
+    /// replaying the query its initiator has accepted and `RESTORE` from backup (`SECONDARY_CREATE`), a
+    /// short `ATTACH TABLE t`, the tables attached by `ATTACH DATABASE` (`attach_short_syntax`) — is
+    /// exempt, so existing tables always load; the write-time guard in `ParquetBlockOutputFormat` still
+    /// protects such legacy tables. A plain `CREATE ... ON CLUSTER` is not a replay: every host runs it
+    /// from the distributed DDL queue as a `CREATE`, so it is rejected on each of them.
     if (configuration->isIcebergConfiguration()
         && ((column_field_ids_in_definition && !format_settings->parquet.column_field_ids.empty())
             || (auto_assign_field_ids_in_definition && format_settings->parquet.auto_assign_field_ids))
