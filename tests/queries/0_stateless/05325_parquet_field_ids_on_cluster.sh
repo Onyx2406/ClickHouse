@@ -21,7 +21,13 @@ outcome()
     then
         echo "OK"
     else
-        echo "$out" | grep -o -m1 'BAD_ARGUMENTS' || echo "$out"
+        # The error text of a distributed DDL query can contain the code name several times on one line.
+        if echo "$out" | grep -q 'BAD_ARGUMENTS'
+        then
+            echo "BAD_ARGUMENTS"
+        else
+            echo "$out"
+        fi
     fi
 }
 
