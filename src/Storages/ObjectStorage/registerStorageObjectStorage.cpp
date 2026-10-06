@@ -112,6 +112,12 @@ createStorageObjectStorage(const StorageFactory::Arguments & args, StorageObject
     const bool validate_field_ids_with_resolved_header
         = args.columns.empty() || configuration->format == "auto" || has_partition_by;
 
+    /// A node-local source (`DeltaLakeLocal`, `IcebergLocal`) resolves its schema from the files on
+    /// this very host, so a `Replicated` database follower replaying the query as `SECONDARY_CREATE`
+    /// can resolve a different header than the initiator has validated. Such a replay is not a safe
+    /// one: the follower must validate the definition against its own resolved header.
+    const bool validate_secondary_create = configuration->getType() == ObjectStorageType::Local;
+
     /// A write-capable object storage client is not side-effect free: on Azure it provisions the
     /// container (`AzureBlobStorage::getContainerClient`). While the header-dependent `field_id`
     /// checks are still pending, the `CREATE` may yet be rejected below, so resolve the schema and
@@ -192,7 +198,8 @@ createStorageObjectStorage(const StorageFactory::Arguments & args, StorageObject
             const auto metadata = storage->getInMemoryMetadataPtr(args.getLocalContext(), false);
             writer_header_columns = metadata->getColumns().getAllPhysical();
         }
-        validateParquetFieldIdSettingsWithResolvedHeader(args, storage->getFormatName(), writer_header_columns, *format_settings);
+        validateParquetFieldIdSettingsWithResolvedHeader(
+            args, storage->getFormatName(), writer_header_columns, *format_settings, validate_secondary_create);
     }
 
     /// The definition passed every check, so the table may now provision what it needs to write.
