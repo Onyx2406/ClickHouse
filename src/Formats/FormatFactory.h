@@ -64,6 +64,9 @@ using BucketSplitter = std::shared_ptr<IBucketSplitter>;
 
 FormatSettings getFormatSettings(const ContextPtr & context);
 FormatSettings getFormatSettings(const ContextPtr & context, const Settings & settings);
+/// For the `Native` blocks of the native protocol. A secondary query carries type names in both directions,
+/// because a server-side `Connection` never takes format settings.
+FormatSettings getNativeWireFormatSettings(const ContextPtr & context);
 
 /** Resets the Parquet `field_id` settings (`output_format_parquet_column_field_ids` and
   * `output_format_parquet_auto_assign_field_ids`) to their defaults.
