@@ -4184,7 +4184,9 @@ bool ClientBase::queryNeedsContinuation(const String & text) const
             /// `{`, oversized input, malformed JSON and excessive trailing input are all
             /// errors the executor reports on its own.
             if (effective_settings[Setting::dialect] == Dialect::clickhouse_json
-                && !isClickHouseJSONSetEscape(statement_begin, end, effective_settings[Setting::max_query_size]))
+                && !isClickHouseJSONSetEscape(
+                    statement_begin, end, effective_settings[Setting::max_query_size],
+                    effective_settings[Setting::max_parser_depth], effective_settings[Setting::max_parser_backtracks]))
             {
                 if (!effective_settings[Setting::enable_json_ast_dialect])
                     return false;
