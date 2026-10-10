@@ -97,6 +97,12 @@ bool ParserPrometheusQuery::isIncompleteAtEOF(std::string_view query)
 }
 
 
+const char * ParserPrometheusQuery::findStatementEnd(const char * begin, const char * end)
+{
+    return PromQLStatementEndFinder(begin).find(end);
+}
+
+
 bool ParserPrometheusQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
 {
     /// The `SET <setting>` shorthand would swallow PromQL queries over a metric named `set`

@@ -3963,6 +3963,14 @@ bool ClientBase::queryNeedsContinuation(const String & text) const
                 return std::make_unique<ParserPrometheusQuery>(effective_settings[Setting::promql_database], effective_settings[Setting::promql_table], Field{effective_settings[Setting::promql_evaluation_time]});
             if (dialect == Dialect::polyglot)
                 return std::make_unique<ParserPolyglotQuery>(0, effective_settings[Setting::max_parser_depth], effective_settings[Setting::max_parser_backtracks], effective_settings[Setting::polyglot_dialect], end, effective_settings[Setting::allow_experimental_polyglot_dialect]);
+            /// LogsQL is parsed from the raw text, which runs to the end of the buffer (`max_query_size`
+            /// is 0 like in the rest of the probe, so the raw begin used for its budget does not matter).
+            if (dialect == Dialect::logsql)
+                return std::make_unique<ParserLogsQLQuery>(
+                    effective_settings[Setting::logsql_database], effective_settings[Setting::logsql_table],
+                    effective_settings[Setting::logsql_time_column], effective_settings[Setting::logsql_message_column],
+                    begin, end, effective_settings[Setting::enable_logsql_dialect], effective_settings[Setting::max_parser_depth],
+                    /*max_query_size_=*/ 0);
             /// Trino has statement shapes of its own, e.g. `SET SESSION dialect = 'kusto'`, which
             /// `ParserQuery` rejects, so the `SET` mirroring below would never see that switch.
             if (dialect == Dialect::trino)
@@ -4139,6 +4147,12 @@ bool ClientBase::queryNeedsContinuation(const String & text) const
         /// comment, and independently of the highlighter (with `--highlight 0`
         /// `ReplxxLineReader` never sets its delimiter flag). Comments and
         /// whitespace are skipped because the tokens are built with skip_insignificant.
+        ///
+        /// PromQL and LogsQL have comment rules of their own (a `#` comment that the SQL
+        /// lexer does not recognize), so a `;` that is the last SQL token can be inside
+        /// a comment there, e.g. `sum( #keep ;`. For them the statement loop below finds
+        /// the terminator with the dialect's own rules instead.
+        if (settings[Setting::dialect] != Dialect::promql && settings[Setting::dialect] != Dialect::logsql)
         {
             /// Use a separate `Tokens` instance for this scan. Iterating to
             /// `EndOfStream` advances `Tokens::max_pos`, and the parse loop below
@@ -4352,6 +4366,39 @@ bool ClientBase::queryNeedsContinuation(const String & text) const
                     return has_unclosed_opener(statement_begin);
                 }
 
+                /// PromQL validates the statement with its own parser, which reports a syntax
+                /// error by throwing, and only its own lexical rules tell where the statement
+                /// ends: the SQL lexer takes the `;` in `sum( #keep ;` for a terminator, while
+                /// for PromQL it is inside a comment and the statement is still unfinished.
+                /// So the SQL terminator and bracket scans are not used for it: a statement
+                /// with a PromQL `;` after it is submitted, and one running to the end of input
+                /// is unfinished exactly when the PromQL parser fails at the end of input.
+                if (effective_settings[Setting::dialect] == Dialect::promql)
+                {
+                    if (ParserPrometheusQuery::findStatementEnd(statement_begin, end) != end)
+                        return false;
+                    return ParserPrometheusQuery::isIncompleteAtEOF(std::string_view{statement_begin, static_cast<size_t>(end - statement_begin)});
+                }
+
+                /// The LogsQL parser reports every syntax error by throwing. It stops at a `;`,
+                /// so the statement is unfinished exactly when it fails at the end of input
+                /// (e.g. `error and`, which still expects a filter); its own lexer decides that,
+                /// for the same reason as for PromQL. A disabled dialect or a missing table is
+                /// an error for the executor to report.
+                if (effective_settings[Setting::dialect] == Dialect::logsql)
+                {
+                    if (!effective_settings[Setting::enable_logsql_dialect] || effective_settings[Setting::logsql_table].value.empty())
+                        return false;
+                    return ParserLogsQLQuery::isIncompleteAtEOF(
+                        statement_begin,
+                        end,
+                        effective_settings[Setting::logsql_database],
+                        effective_settings[Setting::logsql_table],
+                        effective_settings[Setting::logsql_time_column],
+                        effective_settings[Setting::logsql_message_column],
+                        effective_settings[Setting::max_parser_depth]);
+                }
+
                 /// An unclosed opener is still a reliable "needs continuation" signal
                 /// here, but `token_iterator.max()` is not: the parse was abandoned
                 /// at an arbitrary point, so anything else is committed and reported
@@ -4392,15 +4439,13 @@ bool ClientBase::queryNeedsContinuation(const String & text) const
                     return sql_pos.max().type == TokenType::EndOfStream;
                 }
 
-                /// PromQL and PRQL validate their entire statement with external
-                /// parsers and communicate syntax errors by throwing. Unlike the
-                /// SQL parser's `Expected`, their error positions are available only
-                /// through dialect-specific probes. Preserve the general rule that
-                /// exceptions are submitted, except when those probes identify EOF
-                /// as the missing input.
+                /// PRQL validates its entire statement with an external compiler and
+                /// communicates syntax errors by throwing. Unlike the SQL parser's
+                /// `Expected`, its error positions are available only through a
+                /// dialect-specific probe. Preserve the general rule that exceptions
+                /// are submitted, except when that probe identifies EOF as the
+                /// missing input.
                 const auto query = std::string_view{statement_begin, static_cast<size_t>(end - statement_begin)};
-                if (effective_settings[Setting::dialect] == Dialect::promql && ParserPrometheusQuery::isIncompleteAtEOF(query))
-                    return true;
                 if (effective_settings[Setting::dialect] == Dialect::prql && ParserPRQLQuery::isIncompleteAtEOF(query))
                     return true;
 
